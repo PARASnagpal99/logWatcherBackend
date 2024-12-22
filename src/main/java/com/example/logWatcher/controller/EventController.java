@@ -5,6 +5,8 @@ import com.example.logWatcher.dto.LastNEventsResponseDto;
 import com.example.logWatcher.service.FileReaderService;
 import jakarta.annotation.PostConstruct;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,6 +28,12 @@ public class EventController {
     @GetMapping("/")
     public ResponseEntity<LastNEventsResponseDto> get10Lines(){
            return fileReaderService.getLastNLinesFromFile(10);
+    }
+
+    @MessageMapping("/events")
+    @SendTo("/topic/events")
+    public String handleLog(String logEvent) {
+        return logEvent;
     }
 
 }

@@ -10,25 +10,20 @@ import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
-import java.nio.file.*;
+import java.io.RandomAccessFile;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+
 
 
 @Service
 public class FileReaderService  {
-
     @Autowired
     private final EventService eventService;
+    private boolean shouldIRun = true;
 
-    public FileReaderService(EventService eventService) {
-        this.eventService = eventService;
-    }
-
-    @PostConstruct
-    public void onStart(){
-          new Thread(this::readFileAndSendEvent).start();
-    }
+    private long lastKnownPosition = 0;
 
     @Value("${log.dir.path}")
     private String directoryPath ;
@@ -36,36 +31,47 @@ public class FileReaderService  {
     @Value("${log.file.path}")
     private String filePath ;
 
+
+    public FileReaderService(EventService eventService) {
+        this.eventService = eventService;
+    }
+
+    @PostConstruct
+    public void onStart(){
+        this.initializeLastKnownPosition();
+        new Thread(this::readFileAndSendEvent).start();
+    }
+
+    public void stopRunning() {
+        this.shouldIRun = false;
+        System.out.println("Stopping the file reader service.");
+    }
+
     public void readFileAndSendEvent() {
-        try {
-            Path directoryPath = Paths.get(this.directoryPath);
-
-            WatchService watchService = FileSystems.getDefault().newWatchService();
-
-            directoryPath.register(watchService, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_MODIFY, StandardWatchEventKinds.ENTRY_DELETE);
-
-            System.out.println("Started watching directory with path : " + directoryPath);
-
-            WatchKey key;
-
-            while ((key = watchService.take()) != null) {
-                for (WatchEvent<?> event : key.pollEvents()) {
-                        if (event.kind() == StandardWatchEventKinds.ENTRY_CREATE) {
-                            eventService.publishEvent("File created: " + event.context());
-                        } else if (event.kind() == StandardWatchEventKinds.ENTRY_DELETE) {
-                            eventService.publishEvent("File deleted: " + event.context());
-                        } else if (event.kind() == StandardWatchEventKinds.ENTRY_MODIFY) {
-                            eventService.publishEvent("File modified: " + event.context());
-                        }
-                    }
-                key.reset();
-                Thread.sleep(100);
+        try(RandomAccessFile randomAccessFile = new RandomAccessFile(filePath , "r")) {
+            while (shouldIRun) {
+                Thread.sleep(1000);
+                long currentLength = randomAccessFile.length() ;
+                randomAccessFile.seek(lastKnownPosition);
+                if(randomAccessFile.getFilePointer() < currentLength){
+                    String newContent = randomAccessFile.readLine();
+                    eventService.publishEvent("NEW CONTENT : " + newContent);
+                }
+                lastKnownPosition = currentLength;
             }
-
-        } catch (Exception exception) {
-            System.out.println("ERROR READING directory : " + exception.getMessage());
-            exception.printStackTrace();
+        } catch (Exception e) {
+            System.out.println("ERROR READING file : " + e.getMessage());
+            stopRunning();
         }
+    }
+
+    private void initializeLastKnownPosition(){
+            try(RandomAccessFile randomAccessFile = new RandomAccessFile(filePath , "r")){
+                lastKnownPosition = randomAccessFile.length();
+                System.out.println("Initialized lastKnownPosition to: " + lastKnownPosition);
+            }catch (Exception exception){
+                System.out.println("Exception while initialising last known position : " + exception.getMessage());
+            }
     }
 
     public ResponseEntity<LastNEventsResponseDto> getLastNLinesFromFile(int n) {
@@ -83,6 +89,7 @@ public class FileReaderService  {
                     }
                 }
             }
+            Collections.reverse(lines);
             lastNEventsResponseDto.setEvents(lines);
             lastNEventsResponseDto.setCode(HttpStatus.OK.value());
             lastNEventsResponseDto.setMessage("Successfully Fetched last 10 Events");
